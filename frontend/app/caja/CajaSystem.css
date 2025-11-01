@@ -1,0 +1,63 @@
+.caja-container {
+  max-width: 700px;
+  margin: 2rem auto;
+  background: #fff;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  font-family: 'Cabinet Grotesk', sans-serif;
+}
+
+h1 {
+  color: #002661;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.lista-productos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.btn-producto {
+  background: #002661;
+  color: white;
+  padding: .5rem 1rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-producto:hover {
+  background: #013b8b;
+}
+
+.total {
+  margin-top: 1rem;
+  font-weight: bold;
+  color: #ce1126;
+}
+
+.btn-finalizar {
+  width: 100%;
+  background: #002661;
+  color: white;
+  padding: .75rem;
+  margin-top: 1.5rem;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.btn-finalizar:hover {
+  background: #013b8b;
+}
+
+.mensaje {
+  margin-top: 1rem;
+  text-align: center;
+  font-weight: 600;
+  color: #002661;
+}

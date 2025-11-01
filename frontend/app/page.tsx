@@ -4,6 +4,7 @@ import { useRef, useState, useCallback } from "react";
 import Webcam from "react-webcam";
 import axios from "axios";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 
 interface Person {
   name: string;
@@ -33,9 +34,10 @@ interface RecognitionResult {
   message?: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
 export default function Home() {
+  const router = useRouter(); 
   const webcamRef = useRef<Webcam>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<RecognitionResult | null>(null);
@@ -64,7 +66,6 @@ export default function Home() {
       reader.readAsDataURL(file);
     }
   };
-
   const processImage = async (imageSrc: string) => {
     setLoading(true);
     setError("");
@@ -87,12 +88,19 @@ export default function Home() {
       );
 
       setResult(apiResponse.data);
+
+      // 👇 si la persona fue reconocida, redirige a /caja
+      if (apiResponse.data.recognized) {
+        router.push("/caja");
+      }
+
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || "Ocurrió un error");
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">

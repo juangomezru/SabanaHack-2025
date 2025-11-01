@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import face_recognition
 import cv2
@@ -10,7 +10,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import random
-from typing import Any
+from typing import Any, cast
 
 from database import SessionLocal, init_db
 from models import Client, Invoice
@@ -447,6 +447,26 @@ def create_invoice():
     finally:
         session.close()
 
+
+@app.route('/api/invoices/<invoice_id>/xml', methods=['GET'])
+def get_invoice_xml(invoice_id: str):
+    """Return the stored UBL XML for a given invoice. Accepts invoiceId (e.g., PN1001) or numeric ID."""
+    session = _get_db_session()
+    try:
+        inv = session.query(Invoice).filter(Invoice.invoice_id == invoice_id).first()
+        if not inv and invoice_id.isdigit():
+            inv = session.query(Invoice).filter(Invoice.id == int(invoice_id)).first()
+
+        if inv is None or not (inv.xml_content or "").strip():
+            return jsonify({"error": "Invoice not found"}), 404
+
+        xml_text = cast(str, inv.xml_content)
+        resp = Response(xml_text, status=200, mimetype='application/xml')
+        resp.headers['Content-Disposition'] = f'inline; filename="{inv.invoice_id}.xml"'
+        return resp
+    finally:
+        session.close()
+
 if __name__ == '__main__':
     print("Initializing database...")
     init_db()
@@ -454,4 +474,4 @@ if __name__ == '__main__':
     load_training_images()
     print(f"✅ {len(known_face_encodings)} rostros cargados.")
     print("🚀 Iniciando servidor Flask...")
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5000)

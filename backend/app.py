@@ -38,18 +38,6 @@ PEOPLE = {
         "codigo_postal": "111161",
         "telefono": "3132478282"
     },
-    "brayan_yesid": {
-        "name": "BRAYAN YESID BAEZ",
-        "tipo": "C.C",
-        "documento": "1001223222",
-        "email": "brayan.baez@example.com",
-        "direccion": "Cra 192 f N 23",
-        "ciudad": "Bogotá",
-        "departamento": "Bogotá",
-        "codigo_postal": "111161",
-        "telefono": "3132478282"
-    },
-    
     "juan_mateus": {
         "name": "JUAN PABLO MATEUS PARDO",
         "id": "1000019437",

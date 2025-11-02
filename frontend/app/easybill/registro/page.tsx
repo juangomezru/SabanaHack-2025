@@ -30,14 +30,15 @@ export default function RegistroPage() {
     setCargando(true);
 
     try {
-      // 1️⃣ Crear o actualizar cliente
-      const resCliente = await fetch("http://127.0.0.1:5001/api/clients", {
+      // 1️⃣ Registrar cliente en EasyBill
+      const resCliente = await fetch("http://127.0.0.1:5001/easybill/registro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
 
-      if (!resCliente.ok) throw new Error("Error creando cliente");
+      const data = await resCliente.json();
+      if (!resCliente.ok) throw new Error(data.error || "Error registrando cliente");
 
       // 2️⃣ Subir foto si existe
       if (foto) {
@@ -55,7 +56,7 @@ export default function RegistroPage() {
         if (!resFoto.ok) throw new Error("Error subiendo foto");
       }
 
-      alert("Cuenta creada correctamente con foto 🎉");
+      alert("Cliente registrado correctamente 🎉");
       window.location.href = "/easybill/dashboard";
     } catch (err: any) {
       alert(err.message || "Error al registrar usuario.");
@@ -75,7 +76,7 @@ export default function RegistroPage() {
             placeholder={campo.replace("_", " ")}
             onChange={handleChange}
             style={styles.input}
-            required
+            required={["name", "tipo", "documento", "email"].includes(campo)}
           />
         ))}
 
@@ -84,7 +85,7 @@ export default function RegistroPage() {
         <input
           type="file"
           accept="image/*"
-          capture="user" // abre la cámara en móvil
+          capture="user" // activa cámara en móviles
           onChange={handleFotoChange}
           style={styles.input}
         />

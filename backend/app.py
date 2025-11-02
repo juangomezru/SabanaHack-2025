@@ -28,32 +28,6 @@ CORS(app)
 # 👥 BASE DE DATOS DE PERSONAS
 
 PEOPLE = {
-    "juan_diego": {
-        "name": "JUAN DIEGO GOMEZ RUEDA",
-        "tipo": "C.C",
-        "documento": "1001286060",
-        "email": "juandiego.gomez@example.com",
-        "direccion": "Cra 192 f N 23",
-        "ciudad": "Bogotá",
-        "departamento": "Bogotá",
-        "codigo_postal": "111161",
-        "telefono": "3132478282"
-    },
-    "juan_mateus": {
-        "name": "JUAN PABLO MATEUS PARDO",
-        "id": "1000019437",
-        "email": "juan.mateus@example.com"
-    },
-    "sofia_sanchez": {
-        "name": "CLAUDIA SOFIA SANCHEZ TORRES",
-        "id": "1001286059",
-        "email": "claudia.sanchez@example.com"
-    },
-    "juan_villalobos": {
-        "name": "JUAN ESTABAN VILLALOBOS CLAVIJO",
-        "id": "1001286075",
-        "email": "juan.villalobos@example.com"
-    }
 }
 
 # Default supplier (emisor) info for DIAN UBL
@@ -209,12 +183,39 @@ def recognize_face():
 
 @app.route('/api/last_recognized', methods=['GET'])
 def get_last_recognized():
-    """Devuelve los datos del último cliente detectado."""
+    """Devuelve los datos del último cliente detectado, con información completa desde la BD."""
     global last_recognized
-    if last_recognized:
-        return jsonify(last_recognized)
-    else:
+    if not last_recognized or not last_recognized.get("person"):
         return jsonify({"recognized": False, "message": "No se ha detectado ningún cliente"})
+
+    person = last_recognized["person"]
+    document_number = person.get("id") or person.get("documento")
+
+    session = _get_db_session()
+    try:
+        client = session.query(Client).filter(Client.document_number == document_number).first()
+        if client:
+            full_person = {
+                "id": client.document_number,
+                "name": client.name,
+                "email": client.email,
+                "telefono": client.telephone,
+                "direccion": getattr(client, "direccion", None) or None,  # si tienes columna direccion
+                "ciudad": client.city_name,
+                "departamento": client.country_subentity,
+                "codigo_postal": client.postal_zone,
+                "tipo": client.document_type,
+            }
+        else:
+            full_person = person  # fallback por si no existe en la BD
+
+        return jsonify({
+            "recognized": True,
+            "person": full_person,
+            "confidence": last_recognized.get("confidence"),
+        })
+    finally:
+        session.close()
 
 
 @app.route('/api/factura', methods=['POST'])
@@ -297,6 +298,84 @@ def list_clients():
         session.close()
 
 
+@app.route('/api/clients/<document_number>', methods=['GET'])
+def get_client(document_number: str):
+    """Return a single client by document number."""
+    session = _get_db_session()
+    try:
+        client = session.query(Client).filter(Client.document_number == document_number).first()
+        if not client:
+            return jsonify({"error": "Client not found"}), 404
+
+        return jsonify({
+            "id": client.id,
+            "registrationName": client.registration_name,
+            "name": client.name,
+            "documentType": client.document_type,
+            "documentNumber": client.document_number,
+            "email": client.email,
+            "telephone": client.telephone,
+            "address": {
+                "direccion": client.direccion,
+                "cityName": client.city_name,
+                "countrySubentity": client.country_subentity,
+                "postalZone": client.postal_zone,
+                "countryCode": client.country_code,
+            },
+            "createdAt": client.created_at.isoformat(),
+        })
+    finally:
+        session.close()
+
+
+@app.route('/api/clients/blank', methods=['POST'])
+def create_blank_client():
+    """Create a client record with empty fields (useful for quick 'new client' placeholders).
+    Note: document_number is required by the model but may be an empty string.
+    """
+    session = _get_db_session()
+    try:
+        client = Client(
+            registration_name="",
+            name="",
+            document_type="",
+            document_number="",
+            email="",
+            telephone="",
+            direccion="",
+            city_name="",
+            country_subentity="",
+            postal_zone="",
+            country_code="CO",
+        )
+        session.add(client)
+        session.commit()
+        session.refresh(client)
+
+        return jsonify({
+            "id": client.id,
+            "registrationName": client.registration_name,
+            "name": client.name,
+            "documentType": client.document_type,
+            "documentNumber": client.document_number,
+            "email": client.email,
+            "telephone": client.telephone,
+            "address": {
+                "direccion": client.direccion,
+                "cityName": client.city_name,
+                "countrySubentity": client.country_subentity,
+                "postalZone": client.postal_zone,
+                "countryCode": client.country_code,
+            },
+            "createdAt": client.created_at.isoformat(),
+        }), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 @app.route('/api/clients', methods=['POST'])
 def create_client():
     """Create or update a client (upsert by documentNumber)."""
@@ -305,6 +384,16 @@ def create_client():
     missing = [k for k in required if not payload.get(k)]
     if missing:
         return jsonify({"error": f"Faltan campos requeridos del cliente: {', '.join(missing)}"}), 400
+
+    # Normalizar dirección: aceptar 'direccion' plano o dentro de 'address'
+    address_obj = payload.get("address") or {}
+    direccion_val = (
+        payload.get("direccion")
+        or address_obj.get("direccion")
+        or address_obj.get("street")
+        or address_obj.get("address")
+        or None
+    )
 
     session = _get_db_session()
     try:
@@ -317,22 +406,25 @@ def create_client():
                 document_number=payload["documentNumber"],
                 email=payload.get("email"),
                 telephone=payload.get("telephone"),
-                city_name=(payload.get("address") or {}).get("cityName"),
-                country_subentity=(payload.get("address") or {}).get("countrySubentity"),
-                postal_zone=(payload.get("address") or {}).get("postalZone"),
-                country_code=(payload.get("address") or {}).get("countryCode", "CO"),
+                direccion=direccion_val,
+                city_name=address_obj.get("cityName"),
+                country_subentity=address_obj.get("countrySubentity"),
+                postal_zone=address_obj.get("postalZone"),
+                country_code=address_obj.get("countryCode", "CO"),
             )
             session.add(client)
         else:
-            setattr(client, "registration_name", payload["registrationName"])
-            setattr(client, "name", payload["name"])
-            setattr(client, "document_type", payload["documentType"])
-            setattr(client, "email", payload.get("email"))
-            setattr(client, "telephone", payload.get("telephone"))
-            setattr(client, "city_name", (payload.get("address") or {}).get("cityName"))
-            setattr(client, "country_subentity", (payload.get("address") or {}).get("countrySubentity"))
-            setattr(client, "postal_zone", (payload.get("address") or {}).get("postalZone"))
-            setattr(client, "country_code", (payload.get("address") or {}).get("countryCode", client.country_code or "CO"))
+            # Use .get to avoid KeyError and prefer nested address when present
+            client.registration_name = payload.get("registrationName", client.registration_name)
+            client.name = payload.get("name", client.name)
+            client.document_type = payload.get("documentType", client.document_type)
+            client.email = payload.get("email", client.email)
+            client.telephone = payload.get("telephone", client.telephone)
+            client.direccion = direccion_val or client.direccion
+            client.city_name = address_obj.get("cityName") or client.city_name
+            client.country_subentity = address_obj.get("countrySubentity") or client.country_subentity
+            client.postal_zone = address_obj.get("postalZone") or client.postal_zone
+            client.country_code = address_obj.get("countryCode") or client.country_code or "CO"
 
         session.commit()
         session.refresh(client)
@@ -350,6 +442,7 @@ def create_client():
                 "countrySubentity": client.country_subentity,
                 "postalZone": client.postal_zone,
                 "countryCode": client.country_code,
+                "direccion": client.direccion,
             },
             "createdAt": client.created_at.isoformat(),
         }), 201
@@ -483,6 +576,7 @@ def create_invoice():
                 document_number=client_in["documentNumber"],
                 email=client_in.get("email"),
                 telephone=client_in.get("telephone"),
+                direccion=client_in.get("direccion"),
                 city_name=(client_in.get("address") or {}).get("cityName"),
                 country_subentity=(client_in.get("address") or {}).get("countrySubentity"),
                 postal_zone=(client_in.get("address") or {}).get("postalZone"),
@@ -679,6 +773,7 @@ def easybill_registro():
             document_number=data["documento"],
             email=data["email"],
             telephone=data["telefono"],
+            direccion=data.get("direccion"),
             city_name=data["ciudad"],
             country_subentity=data["departamento"],
             postal_zone=data["codigo_postal"],

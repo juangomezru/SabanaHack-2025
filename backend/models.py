@@ -15,8 +15,7 @@ class Client(Base):
     document_number = Column(String(50), nullable=False)
     email = Column(String(255), nullable=True)
     telephone = Column(String(50), nullable=True)
-
-    # Address
+    direccion = Column(String(255), nullable=True) 
     city_name = Column(String(100), nullable=True)
     country_subentity = Column(String(50), nullable=True)  # Departamento code
     postal_zone = Column(String(20), nullable=True)

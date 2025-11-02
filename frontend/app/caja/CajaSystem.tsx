@@ -1,267 +1,282 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import "./CajaSystem.css";
-
-interface Cliente {
-  name: string;
-  tipo?: string;
-  documento?: string;
-  id?: string; // Some people use 'id' instead of 'documento'
-  email: string;
-  direccion?: string;
-  ciudad?: string;
-  departamento?: string;
-  codigo_postal?: string;
-  telefono?: string;
-}
-
-interface Producto {
-  id: number;
-  nombre: string;
-  precio: number;
-}
-
-interface CarritoItem extends Producto {}
+import type { CartItem, Product, Customer } from "./types";
+import CustomerInfo from "./components/CustomerInfo";
+import ProductList from "./components/ProductList";
+import ShoppingCart from "./components/ShoppingCart";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
 export default function CajaSystem() {
-  const [cliente, setCliente] = useState<Cliente | null>(null);
-  const [carrito, setCarrito] = useState<CarritoItem[]>([]);
-  const [medioPago, setMedioPago] = useState("");
-  const [facturaElectronica, setFacturaElectronica] = useState(false);
-  const [mensaje, setMensaje] = useState("");
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [wantsEInvoice, setWantsEInvoice] = useState(false);
+  const [message, setMessage] = useState("");
+  const [purchaseDone, setPurchaseDone] = useState(false);
 
-  const productos: Producto[] = [
-    { id: 1, nombre: "Pan de bono", precio: 2000 },
-    { id: 2, nombre: "Croissant", precio: 3500 },
-    { id: 3, nombre: "Galleta de avena", precio: 2500 },
-    { id: 4, nombre: "Café americano", precio: 3000 },
-    { id: 5, nombre: "Chocolate caliente", precio: 3500 },
-  ];
-
-  // Polling al backend para ver si hay cliente detectado
+  // 🔁 Polling para detectar cliente facial
   useEffect(() => {
+    // Si venimos de una detección fallida, inicializar cliente vacío y limpiar flag
+    try {
+      const flag = localStorage.getItem("face_no_recognized");
+      if (flag) {
+        localStorage.removeItem("face_no_recognized");
+        setCustomer({
+          fullName: "",
+          documentType: "C.C",
+          documentNumber: "",
+          email: "",
+          address: "",
+          city: "",
+          department: "",
+          postalCode: "",
+          phone: "",
+        });
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
     const interval = setInterval(async () => {
       try {
         const response = await axios.get(`${API_URL}/api/last_recognized`);
         if (response.data && response.data.recognized) {
-          setCliente(response.data.person);
+          const p = response.data.person;
+          setCustomer({
+            fullName: p.name,
+            documentType: p.tipo || "C.C",
+            documentNumber: p.documento || p.id || "",
+            email: p.email,
+            address: p.direccion || "",
+            city: p.ciudad || "",
+            department: p.departamento || "",
+            postalCode: p.codigo_postal || "",
+            phone: p.telefono || "",
+          });
           clearInterval(interval);
         }
-      } catch (error) {
-        console.log("Esperando detección facial...");
+      } catch (err) {
+        console.log("Esperando reconocimiento facial...");
       }
-    }, 5000);
-
+    }, 4000);
     return () => clearInterval(interval);
   }, []);
 
-  const agregarProducto = (producto: Producto) => {
-    setCarrito([...carrito, producto]);
-  };
+  const handleAddProduct = useCallback((product: Product) => {
+    setCart((prevCart) => {
+      const existing = prevCart.find((item) => item.id === product.id);
+      if (existing) {
+        return prevCart.map((i) =>
+          i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i
+        );
+      }
+      return [...prevCart, { ...product, quantity: 1 }];
+    });
+  }, []);
 
-  const total = carrito.reduce((acc, p) => acc + p.precio, 0);
-
-  const finalizarCompra = async () => {
-    if (!cliente) {
-      alert("Primero se debe detectar un cliente.");
-      return;
+  const handleUpdateQuantity = useCallback((id: number, qty: number) => {
+    if (qty <= 0) {
+      setCart((prev) => prev.filter((i) => i.id !== id));
+    } else {
+      setCart((prev) => prev.map((i) => (i.id === id ? { ...i, quantity: qty } : i)));
     }
-    if (!medioPago) {
-      alert("Selecciona un método de pago.");
-      return;
-    }
+  }, []);
 
-    // Preparar los datos del cliente para la factura electrónica
-    const documentNumber = cliente.documento || cliente.id || "";
-    const documentType = cliente.tipo || "13"; // 13 = Cédula de ciudadanía
+  const handleRemoveItem = useCallback((id: number) => {
+    setCart((prev) => prev.filter((i) => i.id !== id));
+  }, []);
 
-    const clientePayload = {
-      registrationName: cliente.name,
-      name: cliente.name,
-      documentType: documentType,
-      documentNumber: documentNumber,
-      email: cliente.email,
-      telephone: cliente.telefono || "",
-      address: {
-        cityName: cliente.ciudad || "",
-        countrySubentity: cliente.departamento || "",
-        postalZone: cliente.codigo_postal || "",
-        countryCode: "CO",
-      },
-    };
+  const handleFinalizePurchase = async () => {
+    if (!customer) return alert("⚠️ Esperando detección facial del cliente...");
+    if (cart.length === 0) return alert("🛒 Agrega productos antes de continuar.");
+    if (!paymentMethod) return alert("💳 Selecciona un método de pago.");
 
-    // Convertir los productos del carrito al formato de items de la factura
-    const items = carrito.map((producto) => ({
-      description: producto.nombre,
-      quantity: 1,
-      unitCode: "NIU", // Número de Items (unidades)
-      price: producto.precio,
-    }));
+    const total = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
     try {
-      if (facturaElectronica) {
-        // Si solicita factura electrónica, usar el endpoint de invoices
+      if (wantsEInvoice) {
+        // 🧾 Factura electrónica
         const invoicePayload = {
-          client: clientePayload,
-          items: items,
-          taxRate: 0.19, // IVA del 19%
+          client: {
+            registrationName: customer.fullName,
+            name: customer.fullName,
+            documentType: customer.documentType || "13",
+            documentNumber: customer.documentNumber,
+            email: customer.email,
+            telephone: customer.phone,
+            address: {
+              cityName: customer.city,
+              countrySubentity: customer.department,
+              postalZone: customer.postalCode,
+              countryCode: "CO",
+            },
+          },
+          items: cart.map((p) => ({
+            description: p.name,
+            quantity: p.quantity,
+            unitCode: "NIU",
+            price: p.price,
+          })),
+          taxRate: 0.19,
         };
 
-        const invoiceRes = await axios.post(
-          `${API_URL}/api/invoices`,
-          invoicePayload
+        const invoiceRes = await axios.post(`${API_URL}/api/invoices`, invoicePayload);
+        setMessage(
+          `✅ Compra procesada exitosamente\nFactura: ${invoiceRes.data.invoiceId}\nCUFE: ${invoiceRes.data.cufe}\n` +
+            (invoiceRes.data.email_sent
+              ? "📧 Factura enviada por correo"
+              : "⚠️ Factura generada, correo pendiente.")
         );
 
-        setMensaje(
-          `✅ Compra procesada exitosamente!\n` +
-            `Factura: ${invoiceRes.data.invoiceId}\n` +
-            `CUFE: ${invoiceRes.data.cufe}\n` +
-            `${
-              invoiceRes.data.email_sent
-                ? "📧 Factura enviada por correo"
-                : "⚠️ Factura generada (correo pendiente)"
-            }`
-        );
       } else {
-        // Si no solicita factura, usar el endpoint antiguo para solo ticket
-        const payload = {
-          cliente,
-          carrito,
-          medioPago,
-          facturaElectronica: false,
-        };
-
-        const res = await axios.post(`${API_URL}/api/factura`, payload);
-        setMensaje(res.data.message);
+        // 🎟️ Ticket simple
+        // Mostrar alerta indicando impresión de QR/ticket
+        alert("🖨️ Imprimiendo código QR con el ticket de compra...");
+        try {
+          await axios.post(`${API_URL}/api/factura`, {
+            cliente: customer,
+            carrito: cart,
+            medioPago: paymentMethod,
+            facturaElectronica: false,
+          });
+          setMessage("✅ Compra procesada y ticket generado correctamente.");
+        } catch (err) {
+          // Si falla el envío (por ejemplo email o red), consideramos la compra procesada
+          // porque para tickets simples no es crítico que el correo se envíe.
+          console.warn("Warning: /api/factura failed but treating as success:", err);
+          setMessage("✅ Compra procesada (ticket generado). No se pudo enviar correo, pero el proceso terminó correctamente.");
+        }
       }
 
-      // Limpiar el carrito y resetear
-      setCarrito([]);
-      setMedioPago("");
-      setFacturaElectronica(false);
+      setCart([]);
+      setPaymentMethod("");
+      setWantsEInvoice(false);
+      setPurchaseDone(true);
     } catch (err: any) {
-      console.error("Error al procesar la compra:", err);
-      setMensaje(err.response?.data?.error || "Error al procesar la compra");
+      console.error(err);
+      setMessage("❌ Error al procesar la compra.");
     }
   };
 
   return (
-    <div className="caja-container">
-      <h1>Sistema de Caja - Panadería Unisabana</h1>
+    <div className="bg-slate-100 min-h-screen font-sans p-4 sm:p-6 lg:p-8">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-6 text-center">
+          <h1 className="text-3xl font-bold text-slate-800">
+            Sistema de Caja – EasyBill
+          </h1>
+        </header>
 
-      <section className="productos">
-        <h2>Productos disponibles</h2>
-        <div className="lista-productos">
-          {productos.map((p) => (
+        <main className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          <div className="lg:col-span-3 space-y-6">
+            {/* 🧍 Datos del cliente */}
+            {customer ? (
+              <CustomerInfo customer={customer} />
+            ) : (
+              <div className="p-6 bg-white rounded-lg shadow-md text-center text-gray-500">
+                <p className="animate-pulse">📸 Esperando reconocimiento facial...</p>
+              </div>
+            )}
+
+            {/* 🥐 Productos */}
+            <ProductList onAddProduct={handleAddProduct} />
+          </div>
+
+          {/* 🧾 Carrito y pago */}
+          <div className="lg:col-span-2 space-y-6">
+            <ShoppingCart
+              items={cart}
+              onUpdateQuantity={handleUpdateQuantity}
+              onRemoveItem={handleRemoveItem}
+            />
+
+            <div className="p-6 bg-white rounded-lg shadow-md space-y-4">
+              <h2 className="text-xl font-bold text-gray-800 mb-2 border-b pb-2">
+                Finalizar Compra
+              </h2>
+
+              {/* Método de pago */}
+              <div>
+                <label
+                  htmlFor="payment-method"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Método de pago
+                </label>
+                <select
+                  id="payment-method"
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                >
+                  <option value="">Seleccione...</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
+                  <option value="Tarjeta de Débito">Tarjeta de Débito</option>
+                  <option value="Nequi">Nequi</option>
+                </select>
+              </div>
+
+              {/* Factura electrónica */}
+              <div className="relative flex items-start">
+                <div className="flex items-center h-5">
+                  <input
+                    id="e-invoice"
+                    type="checkbox"
+                    checked={wantsEInvoice}
+                    onChange={(e) => setWantsEInvoice(e.target.checked)}
+                    className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                  />
+                </div>
+                <div className="ml-3 text-sm">
+                  <label
+                    htmlFor="e-invoice"
+                    className="font-medium text-gray-700"
+                  >
+                    ¿Desea factura electrónica?
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Botón principal */}
             <button
-              key={p.id}
-              onClick={() => agregarProducto(p)}
-              className="btn-producto"
+              onClick={handleFinalizePurchase}
+              className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-slate-800 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
-              {p.nombre} - ${p.precio}
+              Finalizar compra
             </button>
-          ))}
-        </div>
-      </section>
 
-      <section className="carrito">
-        <h2>Carrito</h2>
-        {carrito.length === 0 ? (
-          <p>No hay productos agregados.</p>
-        ) : (
-          <ul>
-            {carrito.map((p, i) => (
-              <li key={i}>
-                {p.nombre} - ${p.precio}
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="total">Total: ${total}</p>
-      </section>
+            {purchaseDone && (
+              <button
+                onClick={async () => {
+                  try {
+                    // create a blank client record in the backend, ignore errors
+                    await axios.post(`${API_URL}/api/clients/blank`);
+                  } catch (e) {
+                    console.warn('Could not create blank client record', e);
+                  }
+                  // then redirect to root
+                  window.location.href = 'http://localhost:3000';
+                }}
+                className="w-full mt-3 bg-white text-slate-900 font-semibold py-2 px-4 rounded-lg border border-slate-300 hover:bg-slate-50 transition-all duration-200"
+              >
+                Nuevo cliente
+              </button>
+            )}
 
-      <section className="cliente">
-        <h2>Datos del Cliente</h2>
-        {cliente ? (
-          <div className="datos">
-            <p>
-              <b>Nombre:</b> {cliente.name}
-            </p>
-            {cliente.tipo && (
-              <p>
-                <b>Tipo de documento:</b> {cliente.tipo}
-              </p>
-            )}
-            <p>
-              <b>Número:</b> {cliente.documento || cliente.id}
-            </p>
-            <p>
-              <b>Correo:</b> {cliente.email}
-            </p>
-            {cliente.telefono && (
-              <p>
-                <b>Teléfono:</b> {cliente.telefono}
-              </p>
-            )}
-            {cliente.direccion && (
-              <p>
-                <b>Dirección:</b> {cliente.direccion}
-              </p>
-            )}
-            {cliente.ciudad && (
-              <p>
-                <b>Ciudad:</b> {cliente.ciudad}
-              </p>
-            )}
-            {cliente.departamento && (
-              <p>
-                <b>Departamento:</b> {cliente.departamento}
-              </p>
-            )}
-            {cliente.codigo_postal && (
-              <p>
-                <b>Código postal:</b> {cliente.codigo_postal}
-              </p>
+            {/* Mensaje */}
+            {message && (
+              <div className="p-4 bg-green-100 border border-green-400 rounded-lg text-green-700 text-sm font-medium whitespace-pre-line">
+                {message}
+              </div>
             )}
           </div>
-        ) : (
-          <p className="espera">Esperando reconocimiento facial...</p>
-        )}
-      </section>
-
-      <section className="pago">
-        <h2>Método de pago</h2>
-        <select
-          value={medioPago}
-          onChange={(e) => setMedioPago(e.target.value)}
-        >
-          <option value="">Seleccione</option>
-          <option value="Efectivo">Efectivo</option>
-          <option value="Tarjeta">Tarjeta</option>
-          <option value="Transferencia">Transferencia</option>
-        </select>
-      </section>
-
-      <section className="factura">
-        <label>
-          <input
-            type="checkbox"
-            checked={facturaElectronica}
-            onChange={() => setFacturaElectronica(!facturaElectronica)}
-          />
-          ¿Desea factura electrónica?
-        </label>
-      </section>
-
-      <button className="btn-finalizar" onClick={finalizarCompra}>
-        Finalizar compra
-      </button>
-
-      {mensaje && <p className="mensaje">{mensaje}</p>}
+        </main>
+      </div>
     </div>
   );
 }

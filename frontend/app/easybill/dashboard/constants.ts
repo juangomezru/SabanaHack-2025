@@ -5,7 +5,7 @@ export const STORES_DATA: Store[] = [
   {
     id: 1,
     name: "Éxito",
-    logoUrl: "https://www.america-retail.com/static//2022/11/exito.png",
+    logoUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/Almacenes_exito_logo.svg/1200px-Almacenes_exito_logo.svg.png",
     offers: [
       {
         id: 101,
@@ -32,8 +32,8 @@ export const STORES_DATA: Store[] = [
   },
   {
     id: 2,
-    name: "Juan Valdez Café",
-    logoUrl: "https://pbs.twimg.com/profile_images/1600175949591429120/Pz56n-1K_400x400.jpg",
+    name: "Unisabana Dining",
+    logoUrl: "https://upload.wikimedia.org/wikipedia/commons/a/af/Unisabana.png",
     offers: [
       {
         id: 201,
@@ -61,7 +61,7 @@ export const STORES_DATA: Store[] = [
   {
     id: 3,
     name: "Alkosto",
-    logoUrl: "https://colombia.payu.com/wp-content/uploads/sites/6/2020/06/alkosto-1.png",
+    logoUrl: "https://foncrea.com/cdn/shop/files/alkosto.png?v=1752585823",
     offers: [
       {
         id: 301,

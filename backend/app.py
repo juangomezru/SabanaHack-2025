@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from database import SessionLocal, init_db
 from models import Client, Invoice
 from xml_utils import build_ubl_invoice
+from pdf_utils import generate_invoice_pdf
 
 load_dotenv()
 app = Flask(__name__)
@@ -590,14 +591,33 @@ def create_invoice():
                 <p><a href="{inv.qrcode_url}">{inv.qrcode_url}</a></p>
                 """
 
-                attachment_b64 = base64.b64encode(inv.xml_content.encode("utf-8")).decode("ascii")
+                # Build attachments: XML and PDF
+                attachment_xml_b64 = base64.b64encode(inv.xml_content.encode("utf-8")).decode("ascii")
+
+                pdf_bytes = generate_invoice_pdf(
+                    invoice_id=cast(str, inv.invoice_id),
+                    issue_date=issue_dt,
+                    client_name=cast(str, client.name),
+                    client_document=cast(str, client.document_number),
+                    client_email=cast(str | None, client.email),
+                    items=items_in,
+                    subtotal=round(tax_exclusive, 2),
+                    tax_rate=tax_rate,
+                    total=payable,
+                    currency=cast(str, inv.currency),
+                    cufe=cast(str | None, inv.cufe),
+                    qrcode_url=cast(str | None, inv.qrcode_url),
+                )
+                attachment_pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+
                 payload = {
                     "from": {"email": from_email, "name": from_name},
                     "to": [{"email": 'juangoru@unisabana.edu.co'}],
                     "subject": subject,
                     "html": html,
                     "attachments": [
-                        {"content": attachment_b64, "filename": f"{inv.invoice_id}.xml"}
+                        {"content": attachment_xml_b64, "filename": f"{inv.invoice_id}.xml"},
+                        {"content": attachment_pdf_b64, "filename": f"{inv.invoice_id}.pdf"}
                     ],
                 }
                 headers = {

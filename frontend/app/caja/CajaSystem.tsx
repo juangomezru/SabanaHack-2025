@@ -6,14 +6,15 @@ import "./CajaSystem.css";
 
 interface Cliente {
   name: string;
-  tipo: string;
-  documento: string;
+  tipo?: string;
+  documento?: string;
+  id?: string; // Some people use 'id' instead of 'documento'
   email: string;
-  direccion: string;
-  ciudad: string;
-  departamento: string;
-  codigo_postal: string;
-  telefono: string;
+  direccion?: string;
+  ciudad?: string;
+  departamento?: string;
+  codigo_postal?: string;
+  telefono?: string;
 }
 
 interface Producto {
@@ -74,20 +75,76 @@ export default function CajaSystem() {
       return;
     }
 
-    const payload = {
-      cliente,
-      carrito,
-      medioPago,
-      facturaElectronica,
+    // Preparar los datos del cliente para la factura electrónica
+    const documentNumber = cliente.documento || cliente.id || "";
+    const documentType = cliente.tipo || "13"; // 13 = Cédula de ciudadanía
+
+    const clientePayload = {
+      registrationName: cliente.name,
+      name: cliente.name,
+      documentType: documentType,
+      documentNumber: documentNumber,
+      email: cliente.email,
+      telephone: cliente.telefono || "",
+      address: {
+        cityName: cliente.ciudad || "",
+        countrySubentity: cliente.departamento || "",
+        postalZone: cliente.codigo_postal || "",
+        countryCode: "CO",
+      },
     };
 
+    // Convertir los productos del carrito al formato de items de la factura
+    const items = carrito.map((producto) => ({
+      description: producto.nombre,
+      quantity: 1,
+      unitCode: "NIU", // Número de Items (unidades)
+      price: producto.precio,
+    }));
+
     try {
-      const res = await axios.post(`${API_URL}/api/factura`, payload);
-      setMensaje(res.data.message);
+      if (facturaElectronica) {
+        // Si solicita factura electrónica, usar el endpoint de invoices
+        const invoicePayload = {
+          client: clientePayload,
+          items: items,
+          taxRate: 0.19, // IVA del 19%
+        };
+
+        const invoiceRes = await axios.post(
+          `${API_URL}/api/invoices`,
+          invoicePayload
+        );
+
+        setMensaje(
+          `✅ Compra procesada exitosamente!\n` +
+            `Factura: ${invoiceRes.data.invoiceId}\n` +
+            `CUFE: ${invoiceRes.data.cufe}\n` +
+            `${
+              invoiceRes.data.email_sent
+                ? "📧 Factura enviada por correo"
+                : "⚠️ Factura generada (correo pendiente)"
+            }`
+        );
+      } else {
+        // Si no solicita factura, usar el endpoint antiguo para solo ticket
+        const payload = {
+          cliente,
+          carrito,
+          medioPago,
+          facturaElectronica: false,
+        };
+
+        const res = await axios.post(`${API_URL}/api/factura`, payload);
+        setMensaje(res.data.message);
+      }
+
+      // Limpiar el carrito y resetear
       setCarrito([]);
       setMedioPago("");
       setFacturaElectronica(false);
     } catch (err: any) {
+      console.error("Error al procesar la compra:", err);
       setMensaje(err.response?.data?.error || "Error al procesar la compra");
     }
   };
@@ -131,15 +188,45 @@ export default function CajaSystem() {
         <h2>Datos del Cliente</h2>
         {cliente ? (
           <div className="datos">
-            <p><b>Nombre:</b> {cliente.name}</p>
-            <p><b>Tipo de documento:</b> {cliente.tipo}</p>
-            <p><b>Número:</b> {cliente.documento}</p>
-            <p><b>Correo:</b> {cliente.email}</p>
-            <p><b>Teléfono:</b> {cliente.telefono}</p>
-            <p><b>Dirección:</b> {cliente.direccion}</p>
-            <p><b>Ciudad:</b> {cliente.ciudad}</p>
-            <p><b>Departamento:</b> {cliente.departamento}</p>
-            <p><b>Código postal:</b> {cliente.codigo_postal}</p>
+            <p>
+              <b>Nombre:</b> {cliente.name}
+            </p>
+            {cliente.tipo && (
+              <p>
+                <b>Tipo de documento:</b> {cliente.tipo}
+              </p>
+            )}
+            <p>
+              <b>Número:</b> {cliente.documento || cliente.id}
+            </p>
+            <p>
+              <b>Correo:</b> {cliente.email}
+            </p>
+            {cliente.telefono && (
+              <p>
+                <b>Teléfono:</b> {cliente.telefono}
+              </p>
+            )}
+            {cliente.direccion && (
+              <p>
+                <b>Dirección:</b> {cliente.direccion}
+              </p>
+            )}
+            {cliente.ciudad && (
+              <p>
+                <b>Ciudad:</b> {cliente.ciudad}
+              </p>
+            )}
+            {cliente.departamento && (
+              <p>
+                <b>Departamento:</b> {cliente.departamento}
+              </p>
+            )}
+            {cliente.codigo_postal && (
+              <p>
+                <b>Código postal:</b> {cliente.codigo_postal}
+              </p>
+            )}
           </div>
         ) : (
           <p className="espera">Esperando reconocimiento facial...</p>
@@ -148,7 +235,10 @@ export default function CajaSystem() {
 
       <section className="pago">
         <h2>Método de pago</h2>
-        <select value={medioPago} onChange={(e) => setMedioPago(e.target.value)}>
+        <select
+          value={medioPago}
+          onChange={(e) => setMedioPago(e.target.value)}
+        >
           <option value="">Seleccione</option>
           <option value="Efectivo">Efectivo</option>
           <option value="Tarjeta">Tarjeta</option>

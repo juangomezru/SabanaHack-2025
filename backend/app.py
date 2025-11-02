@@ -510,6 +510,98 @@ def create_invoice():
     finally:
         session.close()
 
+# =======================================
+# 💙 EASYBILL: Fidelización de clientes
+# =======================================
+
+@app.route('/easybill/registro', methods=['POST'])
+def easybill_registro():
+    """Registra un cliente nuevo en la tabla clients."""
+    data = request.get_json()
+    required = ["name", "tipo", "documento", "email"]
+
+    missing = [k for k in required if not data.get(k)]
+    if missing:
+        return jsonify({"error": f"Faltan campos requeridos: {', '.join(missing)}"}), 400
+
+    session = _get_db_session()
+    try:
+        # Verifica si el cliente ya existe
+        existing = session.query(Client).filter(Client.email == data["email"]).first()
+        if existing:
+            return jsonify({"error": "Ya existe un cliente con ese correo."}), 400
+
+        # Crea el cliente
+        client = Client(
+            registration_name=data["name"],
+            name=data["name"],
+            document_type=data["tipo"],
+            document_number=data["documento"],
+            email=data["email"],
+            telephone=data["telefono"],
+            city_name=data["ciudad"],
+            country_subentity=data["departamento"],
+            postal_zone=data["codigo_postal"],
+            country_code="CO",
+        )
+        session.add(client)
+        session.commit()
+
+        return jsonify({"mensaje": "Cliente registrado exitosamente"}), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/easybill/login', methods=['POST'])
+def easybill_login():
+    """Inicio de sesión simple por correo."""
+    data = request.get_json()
+    email = data.get("email")
+    if not email:
+        return jsonify({"error": "Falta el campo email"}), 400
+
+    session = _get_db_session()
+    try:
+        client = session.query(Client).filter(Client.email == email).first()
+        if not client:
+            return jsonify({"error": "Cliente no encontrado"}), 404
+
+        return jsonify({
+            "mensaje": "Inicio de sesión exitoso",
+            "cliente": {
+                "id": client.id,
+                "name": client.name,
+                "email": client.email,
+                "puntos": getattr(client, "puntos", 0),
+                "canjeos": getattr(client, "canjeos", 0),
+                "bonos": getattr(client, "bonos", 0),
+            }
+        })
+    finally:
+        session.close()
+
+
+@app.route('/easybill/dashboard/<email>', methods=['GET'])
+def easybill_dashboard(email):
+    """Devuelve datos de fidelización del cliente."""
+    session = _get_db_session()
+    try:
+        client = session.query(Client).filter(Client.email == email).first()
+        if not client:
+            return jsonify({"error": "Cliente no encontrado"}), 404
+
+        return jsonify({
+            "nombre": client.name,
+            "puntos": getattr(client, "puntos", 0),
+            "canjeos": getattr(client, "canjeos", 0),
+            "bonos": getattr(client, "bonos", 0),
+        })
+    finally:
+        session.close()
+
 
 @app.route('/api/invoices/<invoice_id>/xml', methods=['GET'])
 def get_invoice_xml(invoice_id: str):
@@ -537,4 +629,4 @@ if __name__ == '__main__':
     load_training_images()
     print(f"✅ {len(known_face_encodings)} rostros cargados.")
     print("🚀 Iniciando servidor Flask...")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5001)

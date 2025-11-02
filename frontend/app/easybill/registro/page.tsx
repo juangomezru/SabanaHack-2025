@@ -13,23 +13,55 @@ export default function RegistroPage() {
     codigo_postal: "",
     telefono: "",
   });
+  const [foto, setFoto] = useState<File | null>(null);
+  const [cargando, setCargando] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm({ ...form, [e.target.name]: e.target.value });
 
+  const handleFotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFoto(e.target.files[0]);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch("http://127.0.0.1:5001/easybill/registro", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
+    setCargando(true);
 
-    if (res.ok) {
-      alert("Cuenta creada correctamente. 🎉");
+    try {
+      // 1️⃣ Registrar cliente en EasyBill
+      const resCliente = await fetch("http://127.0.0.1:5001/easybill/registro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      const data = await resCliente.json();
+      if (!resCliente.ok) throw new Error(data.error || "Error registrando cliente");
+
+      // 2️⃣ Subir foto si existe
+      if (foto) {
+        const formData = new FormData();
+        formData.append("image", foto);
+
+        const resFoto = await fetch(
+          `http://127.0.0.1:5001/api/clients/${form.documento}/images`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+        if (!resFoto.ok) throw new Error("Error subiendo foto");
+      }
+
+      alert("Cliente registrado correctamente 🎉");
       window.location.href = "/easybill/dashboard";
-    } else {
-      alert("Error al registrar usuario.");
+    } catch (err: any) {
+      alert(err.message || "Error al registrar usuario.");
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -44,10 +76,30 @@ export default function RegistroPage() {
             placeholder={campo.replace("_", " ")}
             onChange={handleChange}
             style={styles.input}
+            required={["name", "tipo", "documento", "email"].includes(campo)}
           />
         ))}
-        <button type="submit" style={styles.btn}>
-          Crear cuenta
+
+        {/* 📸 Campo para tomar o subir foto */}
+        <label style={{ fontWeight: "bold" }}>Foto del cliente:</label>
+        <input
+          type="file"
+          accept="image/*"
+          capture="user" // activa cámara en móviles
+          onChange={handleFotoChange}
+          style={styles.input}
+        />
+
+        {foto && (
+          <img
+            src={URL.createObjectURL(foto)}
+            alt="Previsualización"
+            style={{ width: "100%", borderRadius: "8px", marginTop: "0.5rem" }}
+          />
+        )}
+
+        <button type="submit" style={styles.btn} disabled={cargando}>
+          {cargando ? "Creando cuenta..." : "Crear cuenta"}
         </button>
       </form>
     </main>

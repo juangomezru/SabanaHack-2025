@@ -11,11 +11,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import random
 from typing import Any, cast
+import base64
+import requests
+from dotenv import load_dotenv
 
 from database import SessionLocal, init_db
 from models import Client, Invoice
 from xml_utils import build_ubl_invoice
 
+load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
@@ -86,7 +90,7 @@ def load_training_images():
     """Carga todas las imágenes de entrenamiento y crea los encodings."""
     global known_face_encodings, known_face_names
     training_dir = os.path.join(os.path.dirname(__file__), '..', 'training_images')
-
+    
     for person_key, person_data in PEOPLE.items():
         person_dir = os.path.join(training_dir, person_key)
         if os.path.exists(person_dir):
@@ -95,11 +99,26 @@ def load_training_images():
                     image_path = os.path.join(person_dir, filename)
                     image = face_recognition.load_image_file(image_path)
                     encodings = face_recognition.face_encodings(image)
-
+                    
                     if encodings:
                         known_face_encodings.append(encodings[0])
                         known_face_names.append(person_key)
                         print(f"✅ Loaded: {filename} for {person_data['name']}")
+def _encode_and_register_image(image_path: str, person_key: str) -> bool:
+    """Encode a single image file and register it in memory for recognition.
+    Returns True if a face encoding was added.
+    """
+    try:
+        image = face_recognition.load_image_file(image_path)
+        encodings = face_recognition.face_encodings(image)
+        if encodings:
+            known_face_encodings.append(encodings[0])
+            known_face_names.append(person_key)
+            return True
+        return False
+    except Exception:
+        return False
+
 
 
 def generate_mock_purchase():
@@ -114,7 +133,7 @@ def generate_mock_purchase():
 
     selected = random.sample(products, random.randint(1, 3))
     total = sum(p['price'] for p in selected)
-
+    
     return {
         "purchase_id": f"PUR-{random.randint(100000, 999999)}",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -139,28 +158,43 @@ def recognize_face():
     try:
         if 'image' not in request.files:
             return jsonify({"error": "No image provided"}), 400
-
+        
         file = request.files['image']
         image_bytes = file.read()
         nparr = np.frombuffer(image_bytes, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
+        
         # Detección facial
         face_locations = face_recognition.face_locations(rgb_image)
         face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
-
+        
         if not face_encodings:
             return jsonify({"recognized": False, "message": "No se detectó ningún rostro"})
-
+        
         for face_encoding in face_encodings:
             matches = face_recognition.compare_faces(known_face_encodings, face_encoding, tolerance=0.6)
             distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-
+            
             if True in matches:
                 best_match = np.argmin(distances)
                 person_key = known_face_names[best_match]
-                person_data = PEOPLE[person_key]
+                person_data = PEOPLE.get(person_key)
+                if not person_data:
+                    # Try to resolve by document number from DB
+                    session = _get_db_session()
+                    try:
+                        client_row = session.query(Client).filter(Client.document_number == person_key).first()
+                        if client_row:
+                            person_data = {
+                                "name": client_row.name,
+                                "id": client_row.document_number,
+                                "email": client_row.email or ""
+                            }
+                        else:
+                            person_data = {"name": person_key, "id": person_key, "email": ""}
+                    finally:
+                        session.close()
                 confidence = float(1 - distances[best_match])
 
                 # Guardar el último reconocido
@@ -171,7 +205,6 @@ def recognize_face():
                 }
 
                 purchase = generate_mock_purchase()
-
                 return jsonify({
                     "recognized": True,
                     "person": person_data,
@@ -180,7 +213,7 @@ def recognize_face():
                 })
 
         return jsonify({"recognized": False, "message": "Rostro no reconocido"})
-
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -337,6 +370,55 @@ def create_client():
     finally:
         session.close()
 
+
+@app.route('/api/clients/<document_number>/images', methods=['POST'])
+def upload_client_images(document_number: str):
+    """Upload one or more images for a client and store them under training_images/{document_number}/.
+    Accepts multipart/form-data with fields: 'image' (single) or 'images' (multiple).
+    """
+    if 'image' not in request.files and 'images' not in request.files:
+        return jsonify({"error": "No images provided. Use 'image' or 'images'."}), 400
+
+    # Resolve or create client folder
+    training_dir = os.path.join(os.path.dirname(__file__), '..', 'training_images')
+    person_dir = os.path.join(training_dir, document_number)
+    os.makedirs(person_dir, exist_ok=True)
+
+    # Collect files
+    files = []
+    if 'image' in request.files:
+        files.append(request.files['image'])
+    if 'images' in request.files:
+        # 'images' can be multiple
+        incoming = request.files.getlist('images')
+        files.extend(incoming)
+
+    allowed_ext = {'.jpg', '.jpeg', '.png'}
+    saved = 0
+    registered = 0
+    saved_files = []
+    now_prefix = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    for idx, f in enumerate(files, start=1):
+        filename = f.filename or f'image_{idx}.jpg'
+        ext = os.path.splitext(filename)[1].lower() or '.jpg'
+        if ext not in allowed_ext:
+            continue
+        safe_name = f"{now_prefix}_{idx}{ext}"
+        dest_path = os.path.join(person_dir, safe_name)
+        f.save(dest_path)
+        saved += 1
+        saved_files.append(safe_name)
+        if _encode_and_register_image(dest_path, document_number):
+            registered += 1
+
+    return jsonify({
+        "documentNumber": document_number,
+        "folder": os.path.abspath(person_dir),
+        "saved": saved,
+        "registeredFaces": registered,
+        "files": saved_files,
+    }), 201
 
 @app.route('/api/invoices', methods=['GET'])
 def list_invoices():
@@ -496,6 +578,55 @@ def create_invoice():
         session.add(inv)
         session.commit()
 
+        # Attempt to send email if client has email and API key is configured
+        email_sent = False
+
+        api_key = os.getenv("MAILERSEND_API_KEY")
+        from_email = os.getenv("MAIL_FROM")
+        from_name = os.getenv("MAIL_FROM_NAME", "SabanaHack")
+        to_email = cast(str | None, client.email)
+        print(api_key, from_email, to_email)
+
+        if api_key and from_email and (to_email or ""):
+            try:
+                subject = f"Factura {inv.invoice_id}"
+                html = f"""
+                <p>Hola {client.name},</p>
+                <p>Gracias por tu compra. Adjuntamos tu factura electrónica.</p>
+                <ul>
+                    <li><strong>Factura:</strong> {inv.invoice_id}</li>
+                    <li><strong>CUFE:</strong> {inv.cufe}</li>
+                    <li><strong>Total a pagar:</strong> {inv.payable_amount} {inv.currency}</li>
+                </ul>
+                <p>Puedes verificar con el siguiente QR/URL:</p>
+                <p><a href="{inv.qrcode_url}">{inv.qrcode_url}</a></p>
+                """
+
+                attachment_b64 = base64.b64encode(inv.xml_content.encode("utf-8")).decode("ascii")
+                payload = {
+                    "from": {"email": from_email, "name": from_name},
+                    "to": [{"email": 'juangoru@unisabana.edu.co'}],
+                    "subject": subject,
+                    "html": html,
+                    "attachments": [
+                        {"content": attachment_b64, "filename": f"{inv.invoice_id}.xml"}
+                    ],
+                }
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                }
+                resp = requests.post("https://api.mailersend.com/v1/email", headers=headers, data=json.dumps(payload), timeout=10)
+                # Debug de respuesta del proveedor
+                try:
+                    resp_json = resp.json()
+                except Exception:
+                    resp_json = None
+                print(f"MailerSend status={resp.status_code} body={resp.text}")
+                email_sent = resp.status_code in (200, 202)
+            except Exception:
+                email_sent = False
+
         return jsonify({
             "invoiceId": inv.invoice_id,
             "cufe": inv.cufe,
@@ -503,6 +634,7 @@ def create_invoice():
             "currency": inv.currency,
             "payableAmount": inv.payable_amount,
             "xml": inv.xml_content,
+            "email_sent": email_sent,
         }), 201
     except Exception as e:
         session.rollback()

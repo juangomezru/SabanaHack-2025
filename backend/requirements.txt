@@ -5,3 +5,4 @@ opencv-python==4.8.1.78
 numpy>=1.26.0
 cmake
 SQLAlchemy>=2.0.0
+requests>=2.32.0

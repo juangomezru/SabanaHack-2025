@@ -275,6 +275,69 @@ def list_clients():
         session.close()
 
 
+@app.route('/api/clients', methods=['POST'])
+def create_client():
+    """Create or update a client (upsert by documentNumber)."""
+    payload: dict[str, Any] = request.get_json(force=True, silent=False)
+    required = ["registrationName", "name", "documentType", "documentNumber"]
+    missing = [k for k in required if not payload.get(k)]
+    if missing:
+        return jsonify({"error": f"Faltan campos requeridos del cliente: {', '.join(missing)}"}), 400
+
+    session = _get_db_session()
+    try:
+        client = session.query(Client).filter(Client.document_number == payload["documentNumber"]).first()
+        if not client:
+            client = Client(
+                registration_name=payload["registrationName"],
+                name=payload["name"],
+                document_type=payload["documentType"],
+                document_number=payload["documentNumber"],
+                email=payload.get("email"),
+                telephone=payload.get("telephone"),
+                city_name=(payload.get("address") or {}).get("cityName"),
+                country_subentity=(payload.get("address") or {}).get("countrySubentity"),
+                postal_zone=(payload.get("address") or {}).get("postalZone"),
+                country_code=(payload.get("address") or {}).get("countryCode", "CO"),
+            )
+            session.add(client)
+        else:
+            setattr(client, "registration_name", payload["registrationName"])
+            setattr(client, "name", payload["name"])
+            setattr(client, "document_type", payload["documentType"])
+            setattr(client, "email", payload.get("email"))
+            setattr(client, "telephone", payload.get("telephone"))
+            setattr(client, "city_name", (payload.get("address") or {}).get("cityName"))
+            setattr(client, "country_subentity", (payload.get("address") or {}).get("countrySubentity"))
+            setattr(client, "postal_zone", (payload.get("address") or {}).get("postalZone"))
+            setattr(client, "country_code", (payload.get("address") or {}).get("countryCode", client.country_code or "CO"))
+
+        session.commit()
+        session.refresh(client)
+
+        return jsonify({
+            "id": client.id,
+            "registrationName": client.registration_name,
+            "name": client.name,
+            "documentType": client.document_type,
+            "documentNumber": client.document_number,
+            "email": client.email,
+            "telephone": client.telephone,
+            "address": {
+                "cityName": client.city_name,
+                "countrySubentity": client.country_subentity,
+                "postalZone": client.postal_zone,
+                "countryCode": client.country_code,
+            },
+            "createdAt": client.created_at.isoformat(),
+        }), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 @app.route('/api/invoices', methods=['GET'])
 def list_invoices():
     session = _get_db_session()
